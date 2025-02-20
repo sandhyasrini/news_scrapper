@@ -12,6 +12,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 
 let task = null;
 
+let postedArticles = new Set();
 async function fetchLatestArticles() {
     const url = 'https://tldr.tech/';
     try {
@@ -20,17 +21,22 @@ async function fetchLatestArticles() {
         const articles = [];
 
         // Extracting article titles, descriptions, and links from 'webdev' section
-        $('#webdev').map((index, element) => {
+        $('#webdev').each((index, element) => {
             try {
-                const title = $(element).find('h2').text().trim();
-                const description = $(element).find('p').text().trim();
-                const link = $(element).find('a').attr('href');
-                articles.push({ title, description, link });
+                $(element).find('a').each((_, anchor) => {
+                    const link = $(anchor).attr('href');
+                    const description = $(element).find('p').text().trim();
+
+                    if (link && !postedArticles.has(link)) {
+                        articles.push({ description, link });
+                        postedArticles.add(link);
+
+                    }
+                });
             } catch (error) {
                 console.error('Error extracting article:', error);
             }
         });
-
         return articles;
     } catch (error) {
         console.error('Error fetching articles:', error);
@@ -41,35 +47,39 @@ async function fetchLatestArticles() {
 async function postLatestArticlesToDiscord() {
     const articles = await fetchLatestArticles();
     if (articles.length > 0) {
-        const message = articles.map(article => `${article.title}\n${article.link}`).join('\n\n');
         try {
             const channel = await client.channels.fetch(process.env.CHANNEL_ID);
-            if (channel) {  // Ensure the channel type is text-based
-                channel.send(message);
+            if (channel) {
+                for (const article of articles) {
+                    if(article.description !== undefined || article.link !== undefined)
+                    {
+                    const message = `${article.description}\n${article.link}`;
+                    await channel.send(message);
+                    }
+                }
             } else {
-                console.error(`Channel ${channelId} is not a text channel.`);
+                console.error(`Channel ${process.env.CHANNEL_ID} is not a text channel.`);
             }
         } catch (error) {
-            console.error(`Error fetching channel ${channelId}:`, error);
+            console.error(`Error fetching channel ${process.env.CHANNEL_ID}:`, error);
         }
+    } else {
+        console.log('No articles found.');
     }
 }
 
 client.once('ready', async () => {
     console.log('Bot is online!');
 
-    // Fetch and post latest articles for the first time
-    await postLatestArticlesToDiscord();
-
-    // Schedule cron job to fetch and post articles every 6 hours
     task = cron.schedule('0 */1 * * *', postLatestArticlesToDiscord, {
         scheduled: true,
     });
 });
 
-client.on('messageCreate', (message) => {
+client.on('messageCreate', async (message) => {
     if (message.content === '!start') {
-        message.channel.send('Bot is already running and fetching articles.');
+        message.channel.send('Fetching latest articles...');
+        await postLatestArticlesToDiscord();
     }
 
     if (message.content === '!stop') {
